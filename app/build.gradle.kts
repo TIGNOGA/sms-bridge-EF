@@ -60,3 +60,6 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.9")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 }
+    // 👇 ADD THIS LINE 👇
+    implementation("io.ktor:ktor-server-cors:2.3.9")
+}
