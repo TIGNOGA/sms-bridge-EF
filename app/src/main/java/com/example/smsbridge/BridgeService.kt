@@ -59,9 +59,23 @@ class BridgeService : Service() {
                 routing {
                     val json = Json { ignoreUnknownKeys = true }
 
-                    get("/status") {
-                        call.respond(mapOf("ok" to true, "paired" to paired, "phone" to Build.MODEL))
-                    }
+                get("/status") {
+                    // Get Carrier Name
+                    val telephonyManager = this@BridgeService.getSystemService(android.content.Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+                    val carrierName = telephonyManager.simOperatorName.ifEmpty { telephonyManager.networkOperatorName }.ifEmpty { "Unknown" }
+                    
+                    // Get Battery Level
+                    val batteryManager = this@BridgeService.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+                    val batteryLevel = batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                    
+                    call.respond(mapOf(
+                        "ok" to true, 
+                        "paired" to paired, 
+                        "phone" to android.os.Build.MODEL,
+                        "carrier" to carrierName,
+                        "battery" to batteryLevel
+                    ))
+                }
 
                     post("/pair") {
                         try {
