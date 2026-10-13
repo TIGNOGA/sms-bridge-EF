@@ -69,6 +69,13 @@ class BridgeService : Service() {
                             if (body.otp == currentOtp) {
                                 sessionToken = UUID.randomUUID().toString()
                                 paired = true
+                                
+                                // Send broadcast to notify MainActivity immediately
+                                val intent = Intent("SMS_BRIDGE_PAIRED").apply {
+                                    setPackage("com.example.smsbridge")
+                                }
+                                this@BridgeService.sendBroadcast(intent)
+                                
                                 call.respond(mapOf("ok" to true, "token" to sessionToken))
                             } else {
                                 call.respond(mapOf("ok" to false, "reason" to "bad_otp"))
