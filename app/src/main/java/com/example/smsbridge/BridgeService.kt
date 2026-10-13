@@ -41,9 +41,67 @@ class BridgeService : Service() {
         super.onCreate()
         running = true
         startForegroundNotification()
+        
         server = embeddedServer(Netty, port = 8080) {
             routing {
-                setupRoutes()
+                val json = Json { ignoreUnknownKeys = true }
+
+                get("/status") {
+                    call.respond(
+                        mapOf(
+                            "ok" to true,
+                            "paired" to paired,
+                            "phone" to Build.MODEL
+                        )
+                    )
+                }
+
+                post("/pair") {
+                    try {
+                        val bodyText = call.receiveText()
+                        val body = json.decodeFromString<PairReq>(bodyText)
+                        if (body.otp == currentOtp) {
+                            sessionToken = UUID.randomUUID().toString()
+                            paired = true
+                            call.respond(mapOf("ok" to true, "token" to sessionToken))
+                        } else {
+                            call.respond(mapOf("ok" to false, "reason" to "bad_otp"))
+                        }
+                    } catch (e: Exception) {
+                        call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
+                    }
+                }
+
+                post("/schedule") {
+                    try {
+                        val bodyText = call.receiveText()
+                        val body = json.decodeFromString<ScheduleReq>(bodyText)
+                        if (body.token != sessionToken) {
+                            call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
+                            return@post
+                        }
+                        val df = SimpleDateFormat.getTimeInstance()
+                        showScheduledNotification(body.messages.size, df.format(Date(body.at)))
+                        call.respond(mapOf("ok" to true))
+                    } catch (e: Exception) {
+                        call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
+                    }
+                }
+
+                post("/send-one") {
+                    try {
+                        val bodyText = call.receiveText()
+                        val body = json.decodeFromString<SendOneReq>(bodyText)
+                        if (body.token != sessionToken) {
+                            call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
+                            return@post
+                        }
+                        sendSms(body.to, body.text, body.sim)
+                        call.respond(mapOf("ok" to true))
+                    } catch (e: Exception) {
+                        call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
+                    }
+                }
             }
         }.start(wait = false)
     }
@@ -75,64 +133,6 @@ class BridgeService : Service() {
             .setContentIntent(pi)
             .build()
         startForeground(1, n)
-    }
-
-    private fun Application.setupRoutes() {
-        val json = Json { ignoreUnknownKeys = true }
-
-        get("/status") {
-            call.respond(
-                mapOf(
-                    "ok" to true,
-                    "paired" to paired,
-                    "phone" to Build.MODEL
-                )
-            )
-        }
-
-        post("/pair") {
-            try {
-                val body = json.decodeFromString<PairReq>(call.receiveText())
-                if (body.otp == currentOtp) {
-                    sessionToken = UUID.randomUUID().toString()
-                    paired = true
-                    call.respond(mapOf("ok" to true, "token" to sessionToken))
-                } else {
-                    call.respond(mapOf("ok" to false, "reason" to "bad_otp"))
-                }
-            } catch (e: Exception) {
-                call.respond(mapOf("ok" to false, "reason" to e.message))
-            }
-        }
-
-        post("/schedule") {
-            try {
-                val body = json.decodeFromString<ScheduleReq>(call.receiveText())
-                if (body.token != sessionToken) {
-                    call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
-                    return@post
-                }
-                val df = SimpleDateFormat.getTimeInstance()
-                showScheduledNotification(body.messages.size, df.format(Date(body.at)))
-                call.respond(mapOf("ok" to true))
-            } catch (e: Exception) {
-                call.respond(mapOf("ok" to false, "reason" to e.message))
-            }
-        }
-
-        post("/send-one") {
-            try {
-                val body = json.decodeFromString<SendOneReq>(call.receiveText())
-                if (body.token != sessionToken) {
-                    call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
-                    return@post
-                }
-                sendSms(body.to, body.text, body.sim)
-                call.respond(mapOf("ok" to true))
-            } catch (e: Exception) {
-                call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
-            }
-        }
     }
 
     private fun showScheduledNotification(count: Int, whenStr: String) {
