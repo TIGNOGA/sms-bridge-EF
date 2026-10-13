@@ -2,6 +2,7 @@ package com.example.smsbridge
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.Color
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -17,19 +18,31 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         tv = TextView(this).apply { 
-            textSize = 17f
+            textSize = 16f
             setPadding(48, 60, 48, 60)
             lineHeight = 70
         }
         setContentView(tv)
-        requestPerms()
-        startBridge()
-        refreshUI()
+
+        // CRASH CATCHER: If anything fails, show it on screen instead of closing
+        Thread.setDefaultUncaughtExceptionHandler { _, e ->
+            tv.setTextColor(Color.RED)
+            tv.text = "APP CRASHED:\n\n${e.message}\n\nStack:\n${e.stackTraceToString()}"
+        }
+
+        try {
+            requestPerms()
+            startBridge()
+            refreshUI()
+        } catch (e: Exception) {
+            tv.setTextColor(Color.RED)
+            tv.text = "STARTUP ERROR:\n\n${e.message}\n\n${e.stackTraceToString()}"
+        }
     }
 
     override fun onResume() { 
         super.onResume()
-        refreshUI() 
+        try { refreshUI() } catch (_: Exception) {}
     }
 
     private fun requestPerms() {
@@ -48,6 +61,7 @@ class MainActivity : AppCompatActivity() {
         val ip = getLocalIp()
         val otp = BridgeService.currentOtp
         val paired = BridgeService.paired
+        tv.setTextColor(Color.WHITE) // Reset to white on success
         tv.text = buildString {
             append("📱 SMS Bridge Pro\n\n")
             append("Connect from PC:\n")
@@ -77,6 +91,6 @@ class MainActivity : AppCompatActivity() {
                 if (!a.isLoopbackAddress && a is Inet4Address) return a.hostAddress ?: ""
             }
         }
-        return "0.0.0.0"
+        return "127.0.0.1"
     }
-} // <-- THIS CLOSING BRACE IS CRUCIAL!
+}
