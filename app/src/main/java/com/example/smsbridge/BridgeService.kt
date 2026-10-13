@@ -11,9 +11,11 @@ import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import androidx.core.app.NotificationCompat
 import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
+import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -47,10 +49,20 @@ class BridgeService : Service() {
             
             server = embeddedServer(Netty, port = 8080) {
                 
-                // CORS Plugin to allow PC browser to connect
+                // Install ContentNegotiation for proper JSON handling
+                install(ContentNegotiation) {
+                    json(Json {
+                        prettyPrint = true
+                        isLenient = true
+                        ignoreUnknownKeys = true
+                    })
+                }
+                
+                // CORS Plugin
                 install(CORS) {
                     anyHost()
                     allowHeader(HttpHeaders.ContentType)
+                    allowHeader(HttpHeaders.Accept)
                     allowMethod(HttpMethod.Get)
                     allowMethod(HttpMethod.Post)
                     allowMethod(HttpMethod.Options)
@@ -59,32 +71,28 @@ class BridgeService : Service() {
                 routing {
                     val json = Json { ignoreUnknownKeys = true }
 
-                get("/status") {
-                    // Get Carrier Name
-                    val telephonyManager = this@BridgeService.getSystemService(android.content.Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
-                    val carrierName = telephonyManager.simOperatorName.ifEmpty { telephonyManager.networkOperatorName }.ifEmpty { "Unknown" }
-                    
-                    // Get Battery Level
-                    val batteryManager = this@BridgeService.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
-                    val batteryLevel = batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                    
-                    call.respond(mapOf(
-                        "ok" to true, 
-                        "paired" to paired, 
-                        "phone" to android.os.Build.MODEL,
-                        "carrier" to carrierName,
-                        "battery" to batteryLevel
-                    ))
-                }
+                    get("/status") {
+                        val telephonyManager = this@BridgeService.getSystemService(android.content.Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+                        val carrierName = telephonyManager.simOperatorName.ifEmpty { telephonyManager.networkOperatorName }.ifEmpty { "Unknown" }
+                        val batteryManager = this@BridgeService.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+                        val batteryLevel = batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                        
+                        call.respond(mapOf(
+                            "ok" to true, 
+                            "paired" to paired, 
+                            "phone" to android.os.Build.MODEL,
+                            "carrier" to carrierName,
+                            "battery" to batteryLevel
+                        ))
+                    }
 
                     post("/pair") {
                         try {
-                            val body = json.decodeFromString<PairReq>(call.receiveText())
+                            val body = call.receive<PairReq>()
                             if (body.otp == currentOtp) {
                                 sessionToken = UUID.randomUUID().toString()
                                 paired = true
                                 
-                                // Send broadcast to notify MainActivity immediately
                                 val intent = Intent("SMS_BRIDGE_PAIRED").apply {
                                     setPackage("com.example.smsbridge")
                                 }
@@ -101,7 +109,7 @@ class BridgeService : Service() {
 
                     post("/schedule") {
                         try {
-                            val body = json.decodeFromString<ScheduleReq>(call.receiveText())
+                            val body = call.receive<ScheduleReq>()
                             if (body.token != sessionToken) {
                                 call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
                                 return@post
@@ -116,7 +124,7 @@ class BridgeService : Service() {
 
                     post("/send-one") {
                         try {
-                            val body = json.decodeFromString<SendOneReq>(call.receiveText())
+                            val body = call.receive<SendOneReq>()
                             if (body.token != sessionToken) {
                                 call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
                                 return@post
