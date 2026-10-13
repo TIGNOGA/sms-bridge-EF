@@ -1,17 +1,19 @@
 package com.example.smsbridge
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.media.RingtoneManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -27,9 +29,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tv: TextView
     private lateinit var btnWake: Button
     private var isScreenAwake = false
+    private var wasPaired = false
+    
+    private val pairingReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "SMS_BRIDGE_PAIRED") {
+                refreshUI()
+                playPairingSound()
+                Toast.makeText(this@MainActivity, "✅ PC Connected!", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
+        
+        // Register broadcast receiver for real-time pairing notification
+        val filter = IntentFilter("SMS_BRIDGE_PAIRED")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(pairingReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(pairingReceiver, filter)
+        }
         
         // CRASH CATCHER
         Thread.setDefaultUncaughtExceptionHandler { _, e ->
@@ -57,7 +78,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() { 
         super.onResume()
-        try { refreshUI() } catch (_: Exception) {}
+        try { 
+            refreshUI()
+            wasPaired = BridgeService.paired
+        } catch (_: Exception) {}
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(pairingReceiver)
+        } catch (_: Exception) {}
     }
 
     private fun requestPerms() {
@@ -69,6 +100,16 @@ class MainActivity : AppCompatActivity() {
     private fun startBridge() {
         if (!BridgeService.running) {
             startForegroundService(Intent(this, BridgeService::class.java))
+        }
+    }
+    
+    private fun playPairingSound() {
+        try {
+            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val ringtone = RingtoneManager.getRingtone(applicationContext, notification)
+            ringtone.play()
+        } catch (_: Exception) {
+            // Fallback: silent if sound fails
         }
     }
 
@@ -145,6 +186,7 @@ class MainActivity : AppCompatActivity() {
         val btnReset = createBtn("🔌 Disconnect PC", "#ef4444") {
             BridgeService.paired = false
             BridgeService.sessionToken = null
+            wasPaired = false
             refreshUI()
             Toast.makeText(this, "PC disconnected!", Toast.LENGTH_SHORT).show()
         }
@@ -159,8 +201,14 @@ class MainActivity : AppCompatActivity() {
         val otp = BridgeService.currentOtp
         val paired = BridgeService.paired
         
+        // Check if just paired (for visual feedback)
+        if (!wasPaired && paired) {
+            tv.setTextColor(Color.parseColor("#10b981")) // Green color for success
+            wasPaired = true
+        }
+        
         tv.text = buildString {
-            append("📱 SMS Bridge Pro\n\n")
+            append(" SMS Bridge Pro\n\n")
             append("Connect from PC:\n")
             append("IP:   $ip:8080\n")
             append("OTP:  $otp\n\n")
