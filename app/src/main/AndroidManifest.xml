@@ -6,13 +6,13 @@
     <uses-permission android:name="android.permission.SEND_SMS"/>
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- 🔧 THIS IS THE FIX FOR ANDROID 14 CRASH -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="SMS Bridge Pro"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+        android:usesCleartextTraffic="true">
         
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
@@ -26,7 +26,7 @@
                   android:exported="false"/>
                   
         <service android:name=".BridgeService" 
-                 android:foregroundServiceType="connectedDevice" 
+                 android:foregroundServiceType="dataSync" 
                  android:exported="false"/>
     </application>
 </manifest>
