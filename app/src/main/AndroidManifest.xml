@@ -28,5 +28,10 @@
         <service android:name=".BridgeService" 
                  android:foregroundServiceType="dataSync" 
                  android:exported="false"/>
-    </application>
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="SMS Bridge Pro"
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+        android:usesCleartextTraffic="true">
 </manifest>
