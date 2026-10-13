@@ -40,75 +40,72 @@ class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
-        startForegroundNotification()
         
-        server = embeddedServer(Netty, port = 8080) {
-            routing {
-                val json = Json { ignoreUnknownKeys = true }
+        try {
+            startForegroundNotification()
+            
+            server = embeddedServer(Netty, port = 8080) {
+                routing {
+                    val json = Json { ignoreUnknownKeys = true }
 
-                get("/status") {
-                    call.respond(
-                        mapOf(
-                            "ok" to true,
-                            "paired" to paired,
-                            "phone" to Build.MODEL
-                        )
-                    )
-                }
+                    get("/status") {
+                        call.respond(mapOf("ok" to true, "paired" to paired, "phone" to Build.MODEL))
+                    }
 
-                post("/pair") {
-                    try {
-                        val bodyText = call.receiveText()
-                        val body = json.decodeFromString<PairReq>(bodyText)
-                        if (body.otp == currentOtp) {
-                            sessionToken = UUID.randomUUID().toString()
-                            paired = true
-                            call.respond(mapOf("ok" to true, "token" to sessionToken))
-                        } else {
-                            call.respond(mapOf("ok" to false, "reason" to "bad_otp"))
+                    post("/pair") {
+                        try {
+                            val body = json.decodeFromString<PairReq>(call.receiveText())
+                            if (body.otp == currentOtp) {
+                                sessionToken = UUID.randomUUID().toString()
+                                paired = true
+                                call.respond(mapOf("ok" to true, "token" to sessionToken))
+                            } else {
+                                call.respond(mapOf("ok" to false, "reason" to "bad_otp"))
+                            }
+                        } catch (e: Exception) {
+                            call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
                         }
-                    } catch (e: Exception) {
-                        call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
+                    }
+
+                    post("/schedule") {
+                        try {
+                            val body = json.decodeFromString<ScheduleReq>(call.receiveText())
+                            if (body.token != sessionToken) {
+                                call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
+                                return@post
+                            }
+                            val df = SimpleDateFormat.getTimeInstance()
+                            showScheduledNotification(body.messages.size, df.format(Date(body.at)))
+                            call.respond(mapOf("ok" to true))
+                        } catch (e: Exception) {
+                            call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
+                        }
+                    }
+
+                    post("/send-one") {
+                        try {
+                            val body = json.decodeFromString<SendOneReq>(call.receiveText())
+                            if (body.token != sessionToken) {
+                                call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
+                                return@post
+                            }
+                            sendSms(body.to, body.text, body.sim)
+                            call.respond(mapOf("ok" to true))
+                        } catch (e: Exception) {
+                            call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
+                        }
                     }
                 }
-
-                post("/schedule") {
-                    try {
-                        val bodyText = call.receiveText()
-                        val body = json.decodeFromString<ScheduleReq>(bodyText)
-                        if (body.token != sessionToken) {
-                            call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
-                            return@post
-                        }
-                        val df = SimpleDateFormat.getTimeInstance()
-                        showScheduledNotification(body.messages.size, df.format(Date(body.at)))
-                        call.respond(mapOf("ok" to true))
-                    } catch (e: Exception) {
-                        call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
-                    }
-                }
-
-                post("/send-one") {
-                    try {
-                        val bodyText = call.receiveText()
-                        val body = json.decodeFromString<SendOneReq>(bodyText)
-                        if (body.token != sessionToken) {
-                            call.respond(mapOf("ok" to false, "reason" to "unauthorized"))
-                            return@post
-                        }
-                        sendSms(body.to, body.text, body.sim)
-                        call.respond(mapOf("ok" to true))
-                    } catch (e: Exception) {
-                        call.respond(mapOf("ok" to false, "reason" to (e.message ?: "error")))
-                    }
-                }
-            }
-        }.start(wait = false)
+            }.start(wait = false)
+        } catch (e: Exception) {
+            // If server fails to start, show a notification with the error
+            showCrashNotification(e.message ?: "Unknown service error")
+        }
     }
     
     override fun onDestroy() { 
         super.onDestroy()
-        server?.stop(1000, 2000)
+        try { server?.stop(1000, 2000) } catch (_: Exception) {}
         running = false 
     }
     
@@ -124,15 +121,26 @@ class BridgeService : Service() {
         }
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val n = NotificationCompat.Builder(this, ch)
             .setContentTitle("SMS Bridge running")
             .setContentText("OTP: $currentOtp")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pi)
+            .setOngoing(true)
             .build()
         startForeground(1, n)
+    }
+
+    private fun showCrashNotification(errorMsg: String) {
+        val ch = "bridge"
+        val n = NotificationCompat.Builder(this, ch)
+            .setContentTitle("Service Failed to Start")
+            .setContentText(errorMsg)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(99, n)
     }
 
     private fun showScheduledNotification(count: Int, whenStr: String) {
@@ -172,25 +180,8 @@ class BridgeService : Service() {
         mgr.sendMultipartTextMessage(to, null, parts, null, null)
     }
 
-    @Serializable
-    data class PairReq(val otp: String)
-    
-    @Serializable
-    data class ScheduleReq(
-        val messages: List<Msg>,
-        val sim: Int,
-        val token: String,
-        val at: Long
-    )
-    
-    @Serializable
-    data class SendOneReq(
-        val to: String,
-        val text: String,
-        val sim: Int,
-        val token: String
-    )
-    
-    @Serializable
-    data class Msg(val to: String, val text: String)
+    @Serializable data class PairReq(val otp: String)
+    @Serializable data class ScheduleReq(val messages: List<Msg>, val sim: Int, val token: String, val at: Long)
+    @Serializable data class SendOneReq(val to: String, val text: String, val sim: Int, val token: String)
+    @Serializable data class Msg(val to: String, val text: String)
 }
