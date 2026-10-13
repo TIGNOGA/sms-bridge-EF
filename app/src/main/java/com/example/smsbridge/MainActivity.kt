@@ -30,21 +30,20 @@ class MainActivity : AppCompatActivity() {
     }
     private fun startBridge() {
         if (!BridgeService.running) {
-            startForegroundService(Intent(this, BridgeService::class.java))
+    private fun startBridge() {
+        if (!BridgeService.running) {
+            try {
+                startForegroundService(Intent(this, BridgeService::class.java))
+            } catch (e: Exception) {
+                // Fallback for older Android versions or permission glitches
+                try {
+                    startService(Intent(this, BridgeService::class.java))
+                } catch (e2: Exception) {
+                    e2.printStackTrace()
+                }
+            }
         }
     }
-    private fun refreshUI() {
-        val ip = getLocalIp()
-        val otp = BridgeService.currentOtp
-        val paired = BridgeService.paired
-        tv.text = buildString {
-            append("📱 SMS Bridge Pro\n\n")
-            append("Connect from PC:\n")
-            append("IP:   $ip:8080\n")
-            append("OTP:  $otp\n\n")
-            append(if (paired) "✅ Paired with PC" else "⏳ Waiting for PC…")
-            append("\n\nKeep this screen open while sending.")
-        }
     }
     private fun getLocalIp(): String {
         try {
