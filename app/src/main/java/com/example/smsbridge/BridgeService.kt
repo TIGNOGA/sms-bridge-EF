@@ -45,6 +45,18 @@ class BridgeService : Service() {
             startForegroundNotification()
             
             server = embeddedServer(Netty, port = 8080) {
+                                // 👇 ADD THIS CORS BLOCK 👇
+                install(CORS) {
+                    anyHost() // Allows requests from any origin (your PC)
+                    allowHeader(HttpHeaders.ContentType)
+                    allowMethod(HttpMethod.Get)
+                    allowMethod(HttpMethod.Post)
+                    allowMethod(HttpMethod.Options)
+                }
+
+                routing {
+                    val json = Json { ignoreUnknownKeys = true }
+                    // ... (keep all the existing get/post routes here) ...
                 routing {
                     val json = Json { ignoreUnknownKeys = true }
 
