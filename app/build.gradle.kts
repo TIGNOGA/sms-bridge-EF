@@ -31,7 +31,6 @@ android {
         jvmTarget = "17"
     }
 
-    // 🔧 THIS IS THE FIX: Tells Android to ignore duplicate Netty metadata files
     packaging {
         resources {
             excludes += "META-INF/INDEX.LIST"
@@ -59,7 +58,7 @@ dependencies {
     implementation("io.ktor:ktor-server-content-negotiation:2.3.9")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.9")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
-}
-    // 👇 ADD THIS LINE 👇
+    
+    // CORS Fix
     implementation("io.ktor:ktor-server-cors:2.3.9")
 }
