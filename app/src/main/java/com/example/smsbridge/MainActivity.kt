@@ -57,20 +57,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun refreshUI() {
-        val ip = getLocalIp()
-        val otp = BridgeService.currentOtp
-        val paired = BridgeService.paired
-        tv.setTextColor(Color.WHITE) // Reset to white on success
-        tv.text = buildString {
-            append("📱 SMS Bridge Pro\n\n")
-            append("Connect from PC:\n")
-            append("IP:   $ip:8080\n")
-            append("OTP:  $otp\n\n")
-            append(if (paired) "✅ Paired with PC" else "⏳ Waiting for PC…")
-            append("\n\nKeep this screen open while sending.")
-        }
+   private fun refreshUI() {
+    val ip = getLocalIp()
+    val otp = BridgeService.currentOtp
+    val paired = BridgeService.paired
+    
+    tv.setTextColor(Color.parseColor("#1a1f36")) // Dark blue-gray text
+    tv.setBackgroundColor(Color.parseColor("#f0f4f8")) // Light gray-blue background
+    tv.setPadding(48, 60, 48, 60)
+    
+    tv.text = buildString {
+        append("📱 SMS Bridge Pro\n\n")
+        append("Connect from PC:\n")
+        append("IP:   $ip:8080\n")
+        append("OTP:  $otp\n\n")
+        append(if (paired) "✅ Paired with PC" else "⏳ Waiting for PC…")
+        append("\n\nKeep this screen open while sending.")
     }
+}
 
     private fun getLocalIp(): String {
         try {
