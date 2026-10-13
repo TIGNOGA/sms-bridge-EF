@@ -14,6 +14,7 @@ import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
+import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -45,18 +46,16 @@ class BridgeService : Service() {
             startForegroundNotification()
             
             server = embeddedServer(Netty, port = 8080) {
-                                // 👇 ADD THIS CORS BLOCK 👇
+                
+                // CORS Plugin to allow PC browser to connect
                 install(CORS) {
-                    anyHost() // Allows requests from any origin (your PC)
+                    anyHost()
                     allowHeader(HttpHeaders.ContentType)
                     allowMethod(HttpMethod.Get)
                     allowMethod(HttpMethod.Post)
                     allowMethod(HttpMethod.Options)
                 }
 
-                routing {
-                    val json = Json { ignoreUnknownKeys = true }
-                    // ... (keep all the existing get/post routes here) ...
                 routing {
                     val json = Json { ignoreUnknownKeys = true }
 
@@ -110,7 +109,6 @@ class BridgeService : Service() {
                 }
             }.start(wait = false)
         } catch (e: Exception) {
-            // If server fails to start, show a notification with the error
             showCrashNotification(e.message ?: "Unknown service error")
         }
     }
