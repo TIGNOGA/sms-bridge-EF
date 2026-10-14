@@ -49,8 +49,6 @@ class BridgeService : Service() {
             startForegroundNotification()
             
             server = embeddedServer(Netty, port = 8080) {
-                
-                // CORS Plugin
                 install(CORS) {
                     anyHost()
                     allowHeader(HttpHeaders.ContentType)
@@ -61,56 +59,37 @@ class BridgeService : Service() {
                 }
 
                 routing {
-                    
-                    // STATUS ENDPOINT (Safe with Try/Catch)
                     get("/status") {
                         try {
                             var carrierName = "Unknown"
                             var batteryLevel = -1
-
-                            // Safe Carrier Check
                             if (checkPermission(Manifest.permission.READ_PHONE_STATE)) {
                                 try {
                                     val tm = getSystemService(TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
-                                    if (tm != null) {
-                                        carrierName = tm.simOperatorName.ifEmpty { tm.networkOperatorName }.ifEmpty { "Unknown" }
-                                    }
-                                } catch (e: Exception) { /* Ignore */ }
+                                    if (tm != null) carrierName = tm.simOperatorName.ifEmpty { tm.networkOperatorName }.ifEmpty { "Unknown" }
+                                } catch (e: Exception) {}
                             }
-
-                            // Safe Battery Check
                             try {
                                 val bm = getSystemService(BATTERY_SERVICE) as? android.os.BatteryManager
-                                if (bm != null) {
-                                    batteryLevel = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                                }
-                            } catch (e: Exception) { /* Ignore */ }
-
-                            call.respondText(
-                                """{"ok":true, "paired":$paired, "phone":"${Build.MODEL}", "carrier":"$carrierName", "battery":$batteryLevel}""",
-                                ContentType.Application.Json
-                            )
+                                if (bm != null) batteryLevel = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                            } catch (e: Exception) {}
+                            call.respondText("""{"ok":true, "paired":$paired, "phone":"${Build.MODEL}", "carrier":"$carrierName", "battery":$batteryLevel}""", ContentType.Application.Json)
                         } catch (e: Exception) {
                             call.respondText("""{"ok":false, "error":"${e.message}"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
                         }
                     }
 
-                    // PAIR ENDPOINT
                     post("/pair") {
                         try {
                             val bodyText = call.receiveText()
                             val body = json.decodeFromString<PairReq>(bodyText)
-                            
                             if (body.otp == currentOtp) {
                                 sessionToken = UUID.randomUUID().toString()
                                 paired = true
-                                
-                                // Notify App
                                 try {
                                     val intent = Intent("SMS_BRIDGE_PAIRED").apply { setPackage("com.example.smsbridge") }
                                     sendBroadcast(intent)
                                 } catch (e: Exception) {}
-
                                 call.respondText("""{"ok":true, "token":"$sessionToken"}""", ContentType.Application.Json)
                             } else {
                                 call.respondText("""{"ok":false, "reason":"bad_otp"}""", ContentType.Application.Json)
@@ -120,24 +99,24 @@ class BridgeService : Service() {
                         }
                     }
 
-                    // SCHEDULE ENDPOINT
-                    post("/schedule") {
+                    // NEW: CONFIRM SEND ENDPOINT
+                    post("/confirm-send") {
                         try {
                             val bodyText = call.receiveText()
-                            val body = json.decodeFromString<ScheduleReq>(bodyText)
+                            val body = json.decodeFromString<ConfirmReq>(bodyText)
                             if (body.token != sessionToken) {
                                 call.respondText("""{"ok":false, "reason":"unauthorized"}""", ContentType.Application.Json)
                                 return@post
                             }
-                            val df = SimpleDateFormat.getTimeInstance()
-                            showScheduledNotification(body.messages.size, df.format(Date(body.at)))
-                            call.respondText("""{"ok":true}""", ContentType.Application.Json)
+                            // Ask user on phone
+                            val approved = askConfirmation(body.messages.size, body.messages.firstOrNull()?.text ?: "")
+                            if (approved) call.respondText("""{"ok":true}""", ContentType.Application.Json)
+                            else call.respondText("""{"ok":false, "reason":"user_cancelled"}""", ContentType.Application.Json)
                         } catch (e: Exception) {
                             call.respondText("""{"ok":false, "reason":"${e.message}"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
                         }
                     }
 
-                    // SEND ONE ENDPOINT
                     post("/send-one") {
                         try {
                             val bodyText = call.receiveText()
@@ -175,41 +154,30 @@ class BridgeService : Service() {
         val ch = "bridge"
         if (Build.VERSION.SDK_INT >= 26) {
             val m = getSystemService(NotificationManager::class.java)
-            m.createNotificationChannel(
-                NotificationChannel(ch, "SMS Bridge", NotificationManager.IMPORTANCE_LOW)
-            )
+            m.createNotificationChannel(NotificationChannel(ch, "SMS Bridge", NotificationManager.IMPORTANCE_LOW))
         }
-        val pi = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val n = NotificationCompat.Builder(this, ch)
-            .setContentTitle("SMS Bridge running")
-            .setContentText("OTP: $currentOtp")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentIntent(pi)
-            .setOngoing(true)
-            .build()
+        val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = NotificationCompat.Builder(this, ch).setContentTitle("SMS Bridge running").setContentText("OTP: $currentOtp").setSmallIcon(android.R.drawable.ic_dialog_info).setContentIntent(pi).setOngoing(true).build()
         startForeground(1, n)
     }
 
     private fun showCrashNotification(errorMsg: String) {
-        val ch = "bridge"
-        val n = NotificationCompat.Builder(this, ch)
-            .setContentTitle("Service Failed")
-            .setContentText(errorMsg)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .build()
+        val n = NotificationCompat.Builder(this, "bridge").setContentTitle("Service Failed").setContentText(errorMsg).setSmallIcon(android.R.drawable.ic_dialog_info).build()
         getSystemService(NotificationManager::class.java).notify(99, n)
     }
 
-    private fun showScheduledNotification(count: Int, whenStr: String) {
-        val n = NotificationCompat.Builder(this, "bridge")
-            .setContentTitle("Scheduled campaign")
-            .setContentText("$count SMS scheduled for $whenStr")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .build()
-        getSystemService(NotificationManager::class.java).notify(2, n)
+    private fun askConfirmation(count: Int, preview: String): Boolean = runBlocking {
+        confirmResult = false
+        val latch = CountDownLatch(1)
+        pendingLatch = latch
+        val i = Intent(this@BridgeService, ConfirmActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra("count", count)
+            putExtra("preview", preview.take(200))
+        }
+        startActivity(i)
+        latch.await() // Wait for user to click
+        confirmResult
     }
 
     private fun sendSms(to: String, text: String, sim: Int) {
@@ -221,13 +189,12 @@ class BridgeService : Service() {
                 SmsManager.getSmsManagerForSubscriptionId(s.subscriptionId)
             } else SmsManager.getDefault()
         } else @Suppress("DEPRECATION") SmsManager.getDefault()
-        
         val parts = mgr.divideMessage(text)
         mgr.sendMultipartTextMessage(to, null, parts, null, null)
     }
 
     @Serializable data class PairReq(val otp: String)
-    @Serializable data class ScheduleReq(val messages: List<Msg>, val sim: Int, val token: String, val at: Long)
+    @Serializable data class ConfirmReq(val messages: List<Msg>, val sim: Int, val token: String) // NEW
     @Serializable data class SendOneReq(val to: String, val text: String, val sim: Int, val token: String)
     @Serializable data class Msg(val to: String, val text: String)
 }
