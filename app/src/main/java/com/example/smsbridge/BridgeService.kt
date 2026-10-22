@@ -33,7 +33,10 @@ class BridgeService : Service() {
         var running = false
         var paired = false
         var currentOtp = String.format("%06d", Random.nextInt(1_000_000))
-        var sessionToken: String? = null
+        
+        // CHANGED: Now holds multiple tokens for multiple PCs
+        var activeTokens = mutableSetOf<String>() 
+        
         var confirmResult: Boolean = false
         var pendingLatch: CountDownLatch? = null
     }
@@ -84,13 +87,17 @@ class BridgeService : Service() {
                             val bodyText = call.receiveText()
                             val body = json.decodeFromString<PairReq>(bodyText)
                             if (body.otp == currentOtp) {
-                                sessionToken = UUID.randomUUID().toString()
+                                // CHANGED: Add token to the set instead of overwriting a single variable
+                                val newToken = UUID.randomUUID().toString()
+                                activeTokens.add(newToken)
                                 paired = true
+                                
                                 try {
                                     val intent = Intent("SMS_BRIDGE_PAIRED").apply { setPackage("com.example.smsbridge") }
                                     sendBroadcast(intent)
                                 } catch (e: Exception) {}
-                                call.respondText("""{"ok":true, "token":"$sessionToken"}""", ContentType.Application.Json)
+
+                                call.respondText("""{"ok":true, "token":"$newToken"}""", ContentType.Application.Json)
                             } else {
                                 call.respondText("""{"ok":false, "reason":"bad_otp"}""", ContentType.Application.Json)
                             }
@@ -99,16 +106,14 @@ class BridgeService : Service() {
                         }
                     }
 
-                    // NEW: CONFIRM SEND ENDPOINT
                     post("/confirm-send") {
                         try {
                             val bodyText = call.receiveText()
                             val body = json.decodeFromString<ConfirmReq>(bodyText)
-                            if (body.token != sessionToken) {
+                            if (body.token !in activeTokens) {
                                 call.respondText("""{"ok":false, "reason":"unauthorized"}""", ContentType.Application.Json)
                                 return@post
                             }
-                            // Ask user on phone
                             val approved = askConfirmation(body.messages.size, body.messages.firstOrNull()?.text ?: "")
                             if (approved) call.respondText("""{"ok":true}""", ContentType.Application.Json)
                             else call.respondText("""{"ok":false, "reason":"user_cancelled"}""", ContentType.Application.Json)
@@ -121,7 +126,7 @@ class BridgeService : Service() {
                         try {
                             val bodyText = call.receiveText()
                             val body = json.decodeFromString<SendOneReq>(bodyText)
-                            if (body.token != sessionToken) {
+                            if (body.token !in activeTokens) {
                                 call.respondText("""{"ok":false, "reason":"unauthorized"}""", ContentType.Application.Json)
                                 return@post
                             }
@@ -176,7 +181,7 @@ class BridgeService : Service() {
             putExtra("preview", preview.take(200))
         }
         startActivity(i)
-        latch.await() // Wait for user to click
+        latch.await()
         confirmResult
     }
 
@@ -194,7 +199,7 @@ class BridgeService : Service() {
     }
 
     @Serializable data class PairReq(val otp: String)
-    @Serializable data class ConfirmReq(val messages: List<Msg>, val sim: Int, val token: String) // NEW
+    @Serializable data class ConfirmReq(val messages: List<Msg>, val sim: Int, val token: String)
     @Serializable data class SendOneReq(val to: String, val text: String, val sim: Int, val token: String)
     @Serializable data class Msg(val to: String, val text: String)
 }
