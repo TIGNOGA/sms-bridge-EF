@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
 import android.media.RingtoneManager
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -44,7 +43,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         
-        // Register broadcast receiver for real-time pairing notification
         val filter = IntentFilter("SMS_BRIDGE_PAIRED")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(pairingReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -52,7 +50,6 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(pairingReceiver, filter)
         }
         
-        // CRASH CATCHER
         Thread.setDefaultUncaughtExceptionHandler { _, e ->
             val errorTv = TextView(this).apply {
                 setPadding(48, 60, 48, 60)
@@ -108,9 +105,7 @@ class MainActivity : AppCompatActivity() {
             val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             val ringtone = RingtoneManager.getRingtone(applicationContext, notification)
             ringtone.play()
-        } catch (_: Exception) {
-            // Fallback: silent if sound fails
-        }
+        } catch (_: Exception) {}
     }
 
     private fun buildUI() {
@@ -120,7 +115,6 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#f0f4f8"))
         }
 
-        // Main Status Text
         tv = TextView(this).apply {
             textSize = 18f
             setTextColor(Color.parseColor("#1a1f36"))
@@ -129,7 +123,6 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(tv)
 
-        // Helper function to create buttons
         fun createBtn(text: String, colorHex: String, onClick: () -> Unit): Button {
             return Button(this).apply {
                 this.text = text
@@ -147,7 +140,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 1. Refresh OTP Button
         val btnRefresh = createBtn("🔄 Refresh OTP", "#6366f1") {
             BridgeService.currentOtp = String.format("%06d", Random.nextInt(1_000_000))
             refreshUI()
@@ -155,7 +147,6 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(btnRefresh)
 
-        // 2. Copy to Clipboard Button
         val btnCopy = createBtn("📋 Copy IP & OTP", "#10b981") {
             val ip = getLocalIp()
             val otp = BridgeService.currentOtp
@@ -167,7 +158,6 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(btnCopy)
 
-        // 3. Keep Screen Awake Button
         btnWake = createBtn("💡 Keep Screen Awake: OFF", "#f59e0b") {
             isScreenAwake = !isScreenAwake
             if (isScreenAwake) {
@@ -182,10 +172,10 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(btnWake)
 
-        // 4. Disconnect PC Button
+        // FIXED: Changed from sessionToken = null to activeTokens.clear()
         val btnReset = createBtn("🔌 Disconnect PC", "#ef4444") {
             BridgeService.paired = false
-            BridgeService.sessionToken = null
+            BridgeService.activeTokens.clear() 
             wasPaired = false
             refreshUI()
             Toast.makeText(this, "PC disconnected!", Toast.LENGTH_SHORT).show()
@@ -201,14 +191,13 @@ class MainActivity : AppCompatActivity() {
         val otp = BridgeService.currentOtp
         val paired = BridgeService.paired
         
-        // Check if just paired (for visual feedback)
         if (!wasPaired && paired) {
-            tv.setTextColor(Color.parseColor("#10b981")) // Green color for success
+            tv.setTextColor(Color.parseColor("#10b981"))
             wasPaired = true
         }
         
         tv.text = buildString {
-            append(" SMS Bridge Pro\n\n")
+            append("📱 SMS Bridge Pro\n\n")
             append("Connect from PC:\n")
             append("IP:   $ip:8080\n")
             append("OTP:  $otp\n\n")
