@@ -4,13 +4,17 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import android.Manifest
+import android.app.Activity
 import androidx.core.app.NotificationCompat
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -25,6 +29,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import kotlin.random.Random
 
@@ -33,20 +38,68 @@ class BridgeService : Service() {
         var running = false
         var paired = false
         var currentOtp = String.format("%06d", Random.nextInt(1_000_000))
-        
-        // CHANGED: Now holds multiple tokens for multiple PCs
-        var activeTokens = mutableSetOf<String>() 
-        
+        var activeTokens = mutableSetOf<String>()
         var confirmResult: Boolean = false
         var pendingLatch: CountDownLatch? = null
+        
+        // NEW: Thread-safe map to store delivery reports
+        val deliveryStatus = ConcurrentHashMap<String, String>()
     }
 
     private var server: ApplicationEngine? = null
     private val json = Json { ignoreUnknownKeys = true }
 
+    // NEW: Receiver to listen for SMS Sent/Delivered events
+    private val smsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val msgId = intent?.getStringExtra("msgId") ?: return
+            val part = intent.getIntExtra("part", 0)
+            
+            when (intent.action) {
+                "SMS_SENT" -> {
+                    val status = when (resultCode) {
+                        Activity.RESULT_OK -> "SENT"
+                        SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "FAILED: Generic"
+                        SmsManager.RESULT_ERROR_NO_SERVICE -> "FAILED: No Service"
+                        SmsManager.RESULT_ERROR_NULL_PDU -> "FAILED: Null PDU"
+                        SmsManager.RESULT_ERROR_RADIO_OFF -> "FAILED: Radio Off"
+                        else -> "FAILED: Unknown ($resultCode)"
+                    }
+                    updateDeliveryStatus(msgId, status)
+                }
+                "SMS_DELIVERED" -> {
+                    if (resultCode == Activity.RESULT_OK) {
+                        updateDeliveryStatus(msgId, "DELIVERED")
+                    } else {
+                        updateDeliveryStatus(msgId, "DELIVERY_FAILED")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun updateDeliveryStatus(msgId: String, status: String) {
+        // Only upgrade status (e.g., SENT -> DELIVERED), don't downgrade
+        val current = deliveryStatus[msgId]
+        if (current != "DELIVERED") {
+            deliveryStatus[msgId] = status
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         running = true
+        
+        // Register SMS receiver
+        val filter = IntentFilter().apply {
+            addAction("SMS_SENT")
+            addAction("SMS_DELIVERED")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(smsReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(smsReceiver, filter)
+        }
         
         try {
             startForegroundNotification()
@@ -87,16 +140,13 @@ class BridgeService : Service() {
                             val bodyText = call.receiveText()
                             val body = json.decodeFromString<PairReq>(bodyText)
                             if (body.otp == currentOtp) {
-                                // CHANGED: Add token to the set instead of overwriting a single variable
                                 val newToken = UUID.randomUUID().toString()
                                 activeTokens.add(newToken)
                                 paired = true
-                                
                                 try {
                                     val intent = Intent("SMS_BRIDGE_PAIRED").apply { setPackage("com.example.smsbridge") }
                                     sendBroadcast(intent)
                                 } catch (e: Exception) {}
-
                                 call.respondText("""{"ok":true, "token":"$newToken"}""", ContentType.Application.Json)
                             } else {
                                 call.respondText("""{"ok":false, "reason":"bad_otp"}""", ContentType.Application.Json)
@@ -130,11 +180,24 @@ class BridgeService : Service() {
                                 call.respondText("""{"ok":false, "reason":"unauthorized"}""", ContentType.Application.Json)
                                 return@post
                             }
-                            sendSms(body.to, body.text, body.sim)
+                            // Initialize status as "PENDING"
+                            deliveryStatus[body.msgId] = "PENDING"
+                            sendSms(body.to, body.text, body.sim, body.msgId)
                             call.respondText("""{"ok":true}""", ContentType.Application.Json)
                         } catch (e: Exception) {
                             call.respondText("""{"ok":false, "reason":"${e.message}"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
                         }
+                    }
+
+                    // NEW: Endpoint for PC to fetch delivery reports
+                    get("/delivery-reports") {
+                        call.respond(deliveryStatus)
+                    }
+                    
+                    // NEW: Endpoint to clear old reports
+                    post("/clear-delivery-reports") {
+                        deliveryStatus.clear()
+                        call.respondText("""{"ok":true}""", ContentType.Application.Json)
                     }
                 }
             }.start(wait = false)
@@ -149,7 +212,10 @@ class BridgeService : Service() {
 
     override fun onDestroy() { 
         super.onDestroy()
-        try { server?.stop(1000, 2000) } catch (_: Exception) {}
+        try { 
+            server?.stop(1000, 2000) 
+            unregisterReceiver(smsReceiver)
+        } catch (_: Exception) {}
         running = false 
     }
     
@@ -185,7 +251,8 @@ class BridgeService : Service() {
         confirmResult
     }
 
-    private fun sendSms(to: String, text: String, sim: Int) {
+    // UPDATED: Now accepts msgId and creates PendingIntents for delivery tracking
+    private fun sendSms(to: String, text: String, sim: Int, msgId: String) {
         val mgr = if (Build.VERSION.SDK_INT >= 31) {
             if (sim > 0) {
                 val sm = getSystemService(SubscriptionManager::class.java)
@@ -194,12 +261,29 @@ class BridgeService : Service() {
                 SmsManager.getSmsManagerForSubscriptionId(s.subscriptionId)
             } else SmsManager.getDefault()
         } else @Suppress("DEPRECATION") SmsManager.getDefault()
+        
         val parts = mgr.divideMessage(text)
-        mgr.sendMultipartTextMessage(to, null, parts, null, null)
+        val sentIntents = ArrayList<PendingIntent>()
+        val deliveredIntents = ArrayList<PendingIntent>()
+        
+        for (i in parts.indices) {
+            val sentIntent = PendingIntent.getBroadcast(
+                this, 0, Intent("SMS_SENT").putExtra("msgId", msgId).putExtra("part", i),
+                PendingIntent.FLAG_IMMUTABLE
+            )
+            val deliveredIntent = PendingIntent.getBroadcast(
+                this, 0, Intent("SMS_DELIVERED").putExtra("msgId", msgId).putExtra("part", i),
+                PendingIntent.FLAG_IMMUTABLE
+            )
+            sentIntents.add(sentIntent)
+            deliveredIntents.add(deliveredIntent)
+        }
+        
+        mgr.sendMultipartTextMessage(to, null, parts, sentIntents, deliveredIntents)
     }
 
     @Serializable data class PairReq(val otp: String)
     @Serializable data class ConfirmReq(val messages: List<Msg>, val sim: Int, val token: String)
-    @Serializable data class SendOneReq(val to: String, val text: String, val sim: Int, val token: String)
+    @Serializable data class SendOneReq(val to: String, val text: String, val sim: Int, val token: String, val msgId: String)
     @Serializable data class Msg(val to: String, val text: String)
 }
