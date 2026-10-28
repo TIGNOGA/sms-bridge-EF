@@ -1,5 +1,6 @@
 package com.example.smsbridge
 
+import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -14,7 +15,6 @@ import android.os.IBinder
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import android.Manifest
-import android.app.Activity
 import androidx.core.app.NotificationCompat
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -26,6 +26,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.*
@@ -42,18 +43,17 @@ class BridgeService : Service() {
         var confirmResult: Boolean = false
         var pendingLatch: CountDownLatch? = null
         
-        // NEW: Thread-safe map to store delivery reports
+        // Thread-safe map to store delivery reports
         val deliveryStatus = ConcurrentHashMap<String, String>()
     }
 
     private var server: ApplicationEngine? = null
     private val json = Json { ignoreUnknownKeys = true }
 
-    // NEW: Receiver to listen for SMS Sent/Delivered events
+    // Receiver to listen for SMS Sent/Delivered events
     private val smsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val msgId = intent?.getStringExtra("msgId") ?: return
-            val part = intent.getIntExtra("part", 0)
             
             when (intent.action) {
                 "SMS_SENT" -> {
@@ -180,7 +180,6 @@ class BridgeService : Service() {
                                 call.respondText("""{"ok":false, "reason":"unauthorized"}""", ContentType.Application.Json)
                                 return@post
                             }
-                            // Initialize status as "PENDING"
                             deliveryStatus[body.msgId] = "PENDING"
                             sendSms(body.to, body.text, body.sim, body.msgId)
                             call.respondText("""{"ok":true}""", ContentType.Application.Json)
@@ -189,12 +188,12 @@ class BridgeService : Service() {
                         }
                     }
 
-                    // NEW: Endpoint for PC to fetch delivery reports
+                    // FIXED: Explicitly encode to JSON string to prevent HTTP 406 errors
                     get("/delivery-reports") {
-                        call.respond(deliveryStatus)
+                        val reportsMap = deliveryStatus.toMap()
+                        call.respondText(json.encodeToString(reportsMap), ContentType.Application.Json)
                     }
                     
-                    // NEW: Endpoint to clear old reports
                     post("/clear-delivery-reports") {
                         deliveryStatus.clear()
                         call.respondText("""{"ok":true}""", ContentType.Application.Json)
@@ -251,7 +250,6 @@ class BridgeService : Service() {
         confirmResult
     }
 
-    // UPDATED: Now accepts msgId and creates PendingIntents for delivery tracking
     private fun sendSms(to: String, text: String, sim: Int, msgId: String) {
         val mgr = if (Build.VERSION.SDK_INT >= 31) {
             if (sim > 0) {
